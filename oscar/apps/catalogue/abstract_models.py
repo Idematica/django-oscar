@@ -668,8 +668,9 @@ class ProductAttributesContainer(object):
                         _("%(attr)s attribute cannot be blank") %
                         {'attr': attribute.code})
             else:
-                if not isinstance(values, collections.Iterable):
-                    values = [values]
+                if not isinstance(values, collections.Iterable) or \
+                   isinstance(values, (basestring, File)):
+                        values = [values]
                 for value in values:
                     try:
                         attribute.validate_value(value)
