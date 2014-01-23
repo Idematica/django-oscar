@@ -3,6 +3,7 @@ from datetime import datetime, date
 import logging
 import os
 import warnings
+import collections
 
 from django.conf import settings
 from django.contrib.staticfiles.finders import find
@@ -660,19 +661,22 @@ class ProductAttributesContainer(object):
 
     def validate_attributes(self):
         for attribute in self.get_all_attributes():
-            value = getattr(self, attribute.code, None)
-            if value is None:
+            values = getattr(self, attribute.code, None)
+            if values is None:
                 if attribute.required:
                     raise ValidationError(
                         _("%(attr)s attribute cannot be blank") %
                         {'attr': attribute.code})
             else:
-                try:
-                    attribute.validate_value(value)
-                except ValidationError, e:
-                    raise ValidationError(
-                        _("%(attr)s attribute %(err)s") %
-                        {'attr': attribute.code, 'err': e})
+                if not isinstance(values, collections.Iterable):
+                    values = [values]
+                for value in values:
+                    try:
+                        attribute.validate_value(value)
+                    except ValidationError, e:
+                        raise ValidationError(
+                            _("%(attr)s attribute %(err)s") %
+                             {'attr': attribute.code, 'err': e})
 
     def get_values(self):
         return self.product.attribute_values.all()
@@ -719,6 +723,7 @@ class AbstractProductAttribute(models.Model):
         ("richtext", _("Rich Text")),
         ("date", _("Date")),
         ("option", _("Option")),
+        ("multi_option", _("Multi Option")),
         ("entity", _("Entity")),
         ("file", _("File")),
         ("image", _("Image")),
@@ -729,7 +734,7 @@ class AbstractProductAttribute(models.Model):
     option_group = models.ForeignKey(
         'catalogue.AttributeOptionGroup', blank=True, null=True,
         verbose_name=_("Option Group"),
-        help_text=_('Select an option group if using type "Option"'))
+        help_text=_('Select an option group if using type "Option" or "Multi Option"'))
     entity_type = models.ForeignKey(
         'catalogue.AttributeEntityType', blank=True, null=True,
         verbose_name=_("Entity Type"),
@@ -797,6 +802,9 @@ class AbstractProductAttribute(models.Model):
                 _("%(enum)s is not a valid choice for %(attr)s") %
                 {'enum': value, 'attr': self})
 
+    def _validate_multi_option(self, value):
+        self._validate_option(value)
+
     def _validate_file(self, value):
         if value and not isinstance(value, File):
             raise ValidationError(_("Must be a file field"))
@@ -811,6 +819,7 @@ class AbstractProductAttribute(models.Model):
             'date': self._validate_date,
             'entity': self._validate_entity,
             'option': self._validate_option,
+            'multi_option': self._validate_multi_option,
             'file': self._validate_file,
             'image': self._validate_file,
         }
@@ -823,38 +832,46 @@ class AbstractProductAttribute(models.Model):
     def save(self, *args, **kwargs):
         super(AbstractProductAttribute, self).save(*args, **kwargs)
 
-    def save_value(self, product, value):
-        try:
-            value_obj = product.attribute_values.get(attribute=self)
-        except get_model('catalogue', 'ProductAttributeValue').DoesNotExist:
-            # FileField uses False for anouncing deletion of the file
-            # not creating a new value
-            delete_file = self.is_file and value is False
-            if value is None or value == '' or delete_file:
-                return
-            model = get_model('catalogue', 'ProductAttributeValue')
-            value_obj = model.objects.create(product=product, attribute=self)
-
-        if self.is_file:
-            # File fields in Django are treated differently, see
-            # django.db.models.fields.FileField and method save_form_data
-            if value is None:
-                # No change
-                return
-            elif value is False:
-                # Delete file
-                value_obj.delete()
-            else:
-                # New uploaded file
-                value_obj.value = value
-                value_obj.save()
+    def save_value(self, product, values):
+        """
+         Value could either be an individual value or
+         a queryset of values (in case of a multiple choice option attribute)
+         """
+        if self.type == 'multi_option':
+            values = set(iter(values))
         else:
-            if value is None or value == '':
-                value_obj.delete()
-                return
-            if value != value_obj.value:
-                value_obj.value = value
-                value_obj.save()
+            values = [values]
+
+        existing_values = product.attribute_values.filter(attribute=self)
+        existing_values.delete()
+
+        for value_obj in values:
+            model = get_model('catalogue', 'ProductAttributeValue')
+            attrib_value = model.objects.create(product=product,
+                                                attribute=self,
+                                                value=value_obj)
+
+        # TODO This is commented in the original pull request, don't know is that is a good thing
+        # if self.is_file:
+        #     # File fields in Django are treated differently, see
+        #     # django.db.models.fields.FileField and method save_form_data
+        #     if value is None:
+        #         # No change
+        #         return
+        #     elif value is False:
+        #         # Delete file
+        #         value_obj.delete()
+        #     else:
+        #         # New uploaded file
+        #         value_obj.value = value
+        #         value_obj.save()
+        # else:
+        #     if value is None or value == '':
+        #         value_obj.delete()
+        #         return
+        #     if value != value_obj.value:
+        #         value_obj.value = value
+        #         value_obj.save()
 
     def validate_value(self, value):
         self.get_validator()(value)
@@ -904,14 +921,20 @@ class AbstractProductAttributeValue(models.Model):
         blank=True, null=True)
 
     def _get_value(self):
+        if self.attribute.type == 'multi_option':
+            val = getattr(self, 'value_%s' % 'option')
+            return val
         return getattr(self, 'value_%s' % self.attribute.type)
 
     def _set_value(self, new_value):
-        if self.attribute.type == 'option' and isinstance(new_value, str):
+        if (self.attribute.type in (u'option', u'multi_option',) and isinstance(new_value, str)):
             # Need to look up instance of AttributeOption
             new_value = self.attribute.option_group.options.get(
                 option=new_value)
-        setattr(self, 'value_%s' % self.attribute.type, new_value)
+        if self.attribute.type == 'multi_option':
+             setattr(self, 'value_%s' % 'option', new_value)
+        else:
+             setattr(self, 'value_%s' % self.attribute.type, new_value)
 
     value = property(_get_value, _set_value)
 
