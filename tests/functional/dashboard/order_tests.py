@@ -37,6 +37,12 @@ class TestOrderListDashboard(WebTestCase):
         form['selected_order'].checked = True
         form.submit('download_selected')
 
+    def test_allows_order_number_search(self):
+        page = self.get(reverse('dashboard:order-list'))
+        form = page.forms['search_form']
+        form['order_number'] = '+'
+        form.submit()
+
 
 class PermissionBasedDashboardOrderTests(ClientTestCase):
     permissions = ['partner.dashboard_access', ]
@@ -46,7 +52,8 @@ class PermissionBasedDashboardOrderTests(ClientTestCase):
         Creates two orders. order_in has self.user in it's partner users list.
         """
         self.client = Client()
-        self.user = self.create_user(username='user1@example.com',
+        self.user = self.create_user(username='_',
+                                     email='user1@example.com',
                                      is_staff=False)
         self.address = G(ShippingAddress)
         self.basket_in = create_basket()
@@ -79,7 +86,7 @@ class PermissionBasedDashboardOrderTests(ClientTestCase):
 
     def test_non_staff_can_only_list_her_orders(self):
         # order-list user1
-        self.client.login(username='user1@example.com', password=self.password)
+        self.client.login(email='user1@example.com', password=self.password)
         response = self.client.get(reverse('dashboard:order-list'))
         self.assertEqual(set(response.context['orders']),
                          set([self.order_in]))
