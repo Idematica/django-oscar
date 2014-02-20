@@ -839,7 +839,7 @@ class AbstractProductAttribute(models.Model):
          Value could either be an individual value or
          a queryset of values (in case of a multiple choice option attribute)
          """
-        if self.type == 'multi_option':
+        if self.type == 'multi_option' and isinstance(values, collections.Iterable):
             values = set(iter(values))
         else:
             values = [values]
