@@ -44,6 +44,28 @@ except ValueError:
                                " 'app_label.model_name'")
 
 
+def existing_user_fields(fields):
+    """
+    Starting with Django 1.6, the User model can be overridden  and it is no
+    longer safe to assume the User model has certain fields. This helper
+    function assists in writing portable forms Meta.fields definitions
+    when those contain fields on the User model
+
+    Usage:
+    class UserForm(forms.Form):
+        ...
+        class Meta:
+            # won't break if first_name is not defined on User model
+            fields = existing_user_fields(['first_name', 'last_name'])
+    """
+    user_fields = get_user_model()._meta.fields
+    user_field_names = [field.name for field in user_fields]
+    return list(set(fields) & set(user_field_names))
+
+#
+# Python3 compatibility layer
+#
+
 def format_html(format_string, *args, **kwargs):
     """
     Backport of format_html from Django 1.5+ to support Django 1.4
