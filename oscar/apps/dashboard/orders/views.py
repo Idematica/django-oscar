@@ -366,7 +366,7 @@ class OrderDetailView(DetailView):
     context_object_name = 'order'
     template_name = 'dashboard/orders/order_detail.html'
     order_actions = ('save_note', 'delete_note', 'change_order_status',
-                     'create_order_payment_event')
+                     'create_order_payment_event', 'create_order_shipping_event')
     line_actions = ('change_line_statuses', 'create_shipping_event',
                     'create_payment_event')
 
@@ -452,8 +452,8 @@ class OrderDetailView(DetailView):
             note.order = order
             note.save()
             messages.success(self.request, success_msg)
-            return self.reload_page_response(fragment='notes')
-        ctx = self.get_context_data(note_form=form, active_tab='notes')
+            return self.reload_page_response(fragment='status')
+        ctx = self.get_context_data(note_form=form, active_tab='status')
         return self.render_to_response(ctx)
 
     def delete_note(self, request, order):
@@ -479,18 +479,19 @@ class OrderDetailView(DetailView):
 
         handler = EventHandler(request.user)
         try:
+            # old_status = order.status
             handler.handle_order_status_change(order, new_status)
         except PaymentError, e:
             messages.error(request, _("Unable to change order status due to"
                                       " payment error: %s") % e)
-        else:
-            msg = _("Order status changed from '%(old_status)s' to"
-                    " '%(new_status)s'") % {'old_status': order.status,
-                                            'new_status': new_status}
-            messages.info(request, msg)
-            order.notes.create(user=request.user, message=msg,
-                               note_type=OrderNote.SYSTEM)
-        return self.reload_page_response(fragment='activity')
+        # else:
+            # msg = _("Order status changed from '%(old_status)s' to"
+            #         " '%(new_status)s'") % {'old_status': old_status,
+            #                                 'new_status': new_status}
+            # messages.info(request, msg)
+            # order.notes.create(user=request.user, message=msg,
+            #                    note_type=OrderNote.SYSTEM)
+        return self.reload_page_response(fragment='status')
 
     def change_line_statuses(self, request, order, lines, quantities):
         new_status = request.POST['new_status'].strip()
@@ -522,6 +523,10 @@ class OrderDetailView(DetailView):
                            note_type=OrderNote.SYSTEM)
         return self.reload_page_response()
 
+    def create_order_shipping_event(self, request, order):
+        quantities = order.lines.values_list('quantity', flat=True)
+        return self.create_shipping_event(request, order, order.lines.all(), quantities)
+
     def create_shipping_event(self, request, order, lines, quantities):
         code = request.POST['shipping_event_type']
         try:
@@ -552,7 +557,10 @@ class OrderDetailView(DetailView):
     def create_order_payment_event(self, request, order):
         amount_str = request.POST.get('amount', None)
         try:
-            amount = D(amount_str)
+            if amount_str:
+                amount = D(amount_str)
+            else:
+                amount = order.total_incl_tax
         except InvalidOperation:
             messages.error(request, _("Please choose a valid amount"))
             return self.reload_page_response()
