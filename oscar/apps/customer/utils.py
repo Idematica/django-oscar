@@ -85,18 +85,25 @@ class Dispatcher(object):
         else:
             from_email = None
 
+        if hasattr(settings, 'OSCAR_BCC_EMAIL') and settings.OSCAR_BCC_EMAIL is not None:
+            bcc_email = [settings.OSCAR_BCC_EMAIL]
+        else:
+            bcc_email = None
+
         # Determine whether we are sending a HTML version too
         if messages['html']:
             email = EmailMultiAlternatives(messages['subject'],
                                            messages['body'],
                                            from_email=from_email,
-                                           to=[recipient])
+                                           to=[recipient],
+                                           bcc=bcc_email)
             email.attach_alternative(messages['html'], "text/html")
         else:
             email = EmailMessage(messages['subject'],
                                  messages['body'],
                                  from_email=from_email,
-                                 to=[recipient])
+                                 to=[recipient],
+                                 bcc=bcc_email)
         self.logger.info("Sending email to %s" % recipient)
         email.send()
 
