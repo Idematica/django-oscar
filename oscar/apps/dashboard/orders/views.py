@@ -1,5 +1,6 @@
 import datetime
 from decimal import Decimal as D, InvalidOperation
+from apps.shipping.models import FixedPriceWithThreshold
 
 from django.contrib import messages
 from django.utils.translation import ugettext_lazy as _
@@ -12,6 +13,7 @@ from django.shortcuts import get_object_or_404
 from django.utils.datastructures import SortedDict
 from django.views.generic import ListView, DetailView, UpdateView, FormView
 from django.conf import settings
+# from oscar.apps.dashboard.orders.forms import LineForm
 
 from oscar.core.loading import get_class
 from oscar.core.utils import format_datetime
@@ -23,6 +25,7 @@ from oscar.apps.payment.exceptions import PaymentError
 from oscar.apps.order.exceptions import InvalidShippingEvent, InvalidStatus
 
 Order = get_model('order', 'Order')
+Product = get_model('catalogue', 'Product')
 OrderNote = get_model('order', 'OrderNote')
 ShippingAddress = get_model('order', 'ShippingAddress')
 Transaction = get_model('payment', 'Transaction')
@@ -31,7 +34,8 @@ ShippingEventType = get_model('order', 'ShippingEventType')
 PaymentEventType = get_model('order', 'PaymentEventType')
 EventHandler = get_class('order.processing', 'EventHandler')
 Partner = get_model('partner', 'Partner')
-
+Selector = get_class('partner.strategy', 'Selector')
+from apps.partner.strategy import DEFAULT_VAT_RATE
 
 def queryset_orders_for_user(user):
     """
@@ -368,7 +372,7 @@ class OrderDetailView(DetailView):
     order_actions = ('save_note', 'delete_note', 'change_order_status',
                      'create_order_payment_event', 'create_order_shipping_event')
     line_actions = ('change_line_statuses', 'create_shipping_event',
-                    'create_payment_event')
+                    'create_payment_event', 'remove_lines')
 
     def get_object(self, queryset=None):
         return get_order_for_user_or_404(self.request.user,
@@ -523,6 +527,21 @@ class OrderDetailView(DetailView):
                            note_type=OrderNote.SYSTEM)
         return self.reload_page_response()
 
+    def remove_lines(self, request, order, lines, quantities):
+        for line in lines:
+            if line.product:
+                if line.product.parent:
+                    product = line.product.parent.get_title().encode('utf-8') + line.product.get_title().encode('utf-8')
+                else:
+                    product = line.product.get_title().encode('utf-8')
+                message = "Line {0} removed".format(product)
+            else:
+                message = "Line {0} removed".format(line.title)
+            line.delete()
+            order.notes.create(user=request.user, message=message,
+                               note_type=OrderNote.SYSTEM)
+        return self.reload_page_response()
+
     def create_order_shipping_event(self, request, order):
         quantities = order.lines.values_list('quantity', flat=True)
         return self.create_shipping_event(request, order, order.lines.all(), quantities)
@@ -619,12 +638,126 @@ class LineDetailView(DetailView):
         try:
             return order.lines.get(pk=self.kwargs['line_id'])
         except self.model.DoesNotExist:
-            raise Http404()
+            return order.lines.create(line_price_incl_tax=0, line_price_excl_tax=0, line_price_before_discounts_incl_tax=0, line_price_before_discounts_excl_tax=0)
 
     def get_context_data(self, **kwargs):
         ctx = super(LineDetailView, self).get_context_data(**kwargs)
         ctx['order'] = self.object.order
+        # ctx['form'] = LineForm()
+        ctx['partners'] = Partner.objects.all()
         return ctx
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        line = self.object
+
+        strategy = Selector().strategy(request)
+
+        title = request.POST.get('title', None)
+        if title:
+            line.title = title
+            line.product = None
+            line.stockrecord = None
+            line.upc = None
+            line.partner_sku = "-"
+            line.line_price_excl_tax = D(request.POST.get('line_price_excl_tax', None))
+            line.line_price_incl_tax = line.line_price_excl_tax + D(line.line_price_excl_tax * DEFAULT_VAT_RATE).quantize(D('0.00'))
+            line.line_price_before_discounts_excl_tax = line.line_price_excl_tax
+            line.line_price_before_discounts_incl_tax = line.line_price_incl_tax
+        elif request.POST.get('product', None):
+            product = request.POST.get('product', None)
+            variant = request.POST.get('variant', None)
+            if variant:
+                line.product = Product.objects.get(pk=variant)
+            else:
+                line.product = Product.objects.get(pk=product)
+            line.title = line.product.get_title()
+            line.upc = line.product.upc
+
+            if not line.product.is_group:
+                purchase_info = strategy.fetch_for_product(line.product)
+                line.stockrecord = purchase_info.stockrecord
+                line.line_price_excl_tax = (line.quantity * purchase_info.price.excl_tax).quantize(D('0.00'))
+                line.line_price_incl_tax = (line.quantity * purchase_info.price.incl_tax).quantize(D('0.00'))
+                line.line_price_before_discounts_excl_tax = line.line_price_excl_tax
+                line.line_price_before_discounts_incl_tax = line.line_price_incl_tax
+
+        line.quantity = request.POST.get('quantity', None)
+
+        color_attr, created = line.attributes.get_or_create(type='color')
+        color_val = request.POST.get('color', None)
+        if color_attr.value != color_val and color_val is not None:
+            old_color_val = color_attr.value
+            color_attr.value = color_val
+            color_attr.save()
+            line.order.notes.create(user=request.user, message="Change color from {0} to {1} ".format(old_color_val, color_val),
+                                    note_type=OrderNote.SYSTEM)
+
+        try:
+            partner = Partner.objects.get(pk=request.POST.get('partner', None))
+            line.partner = partner
+            line.partner_name = partner.name
+            if line.product:
+                stockrecord = line.product.stockrecords.get(partner=partner)
+                if stockrecord:
+                    line.partner_sku = stockrecord.partner_sku
+                else:
+                    line.partner_sku = "-"
+        except ObjectDoesNotExist:
+            pass
+
+        if not line.status and hasattr(settings, 'OSCAR_INITIAL_LINE_STATUS'):
+            line.status = getattr(settings, 'OSCAR_INITIAL_LINE_STATUS')
+            line.order.status = getattr(settings, 'OSCAR_INITIAL_ORDER_STATUS')
+            line.order.notes.create(user=request.user, message="Reset order status",
+                                    note_type=OrderNote.SYSTEM)
+
+        if line.id:
+            # update line
+            message = get_change_summary(Line.objects.get(pk=line.id), line).encode("utf-8")
+            line.order.notes.create(user=request.user, message="Line update ({0}".format(message),
+                               note_type=OrderNote.SYSTEM)
+        else:
+            # create line
+            line.order.notes.create(user=request.user, message="Line created ({0}".format(line.title.encode("utf-8")),
+                                    note_type=OrderNote.SYSTEM)
+        line.save()
+
+        line.prices.all().delete()
+        line_price = line.prices.create(order=line.order,
+                                        quantity=line.quantity,
+                                        price_incl_tax = line.line_price_incl_tax,
+                                        price_excl_tax = line.line_price_excl_tax)
+        line_price.save()
+
+        order_total_excl_tax = 0
+        order_total_incl_tax = 0
+        for price in line.order.line_prices.all():
+            order_total_excl_tax += price.price_excl_tax
+            order_total_incl_tax += price.price_incl_tax
+
+        shipping_method = FixedPriceWithThreshold.objects.filter(code=line.order.shipping_code).first()
+        if order_total_incl_tax > shipping_method.threshold:
+            if line.order.shipping_incl_tax != D(0.00):
+                line.order.shipping_incl_tax = D(0.00)
+                line.order.shipping_excl_tax = D(0.00)
+                line.order.notes.create(user=request.user, message="Shipping costs updated to ({0}".format(D(0.00)),
+                                        note_type=OrderNote.SYSTEM)
+        else:
+            order_total_incl_tax += shipping_method.price
+            order_total_excl_tax += shipping_method.price
+            if line.order.shipping_incl_tax != shipping_method.price:
+                line.order.shipping_incl_tax = shipping_method.price
+                line.order.shipping_excl_tax = shipping_method.price
+                line.order.notes.create(user=request.user, message="Shipping costs updated to ({0}".format(shipping_method.price),
+                                        note_type=OrderNote.SYSTEM)
+
+        line.order.total_excl_tax = order_total_excl_tax
+        line.order.total_incl_tax = order_total_incl_tax
+        line.order.save()
+
+        url = reverse('dashboard:order-detail', kwargs={'number': line.order.number})
+        return HttpResponseRedirect(url)
 
 
 def get_changes_between_models(model1, model2, excludes=None):
