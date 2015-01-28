@@ -18,6 +18,8 @@ class AbstractAddressForm(forms.ModelForm):
                        set(settings.OSCAR_REQUIRED_ADDRESS_FIELDS))
         for field_name in field_names:
             self.fields[field_name].required = True
+            if field_name in settings.OSCAR_REQUIRED_ADDRESS_FIELDS_ERROR_MESSAGES:
+                self.fields[field_name].error_messages['required'] = settings.OSCAR_REQUIRED_ADDRESS_FIELDS_ERROR_MESSAGES[field_name]
 
 
 class UserAddressForm(PhoneNumberMixin, AbstractAddressForm):

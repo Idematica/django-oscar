@@ -267,10 +267,10 @@ class AbstractAddress(models.Model):
         if not self.postcode and self.country_id:
             country_code = self.country.iso_3166_1_a2
             regex = self.POSTCODES_REGEX.get(country_code, None)
-            if regex:
-                msg = _("Addresses in %(country)s require a valid postcode") \
-                    % {'country': self.country}
-                raise exceptions.ValidationError(msg)
+            # if regex:
+            #     msg = _("Addresses in %(country)s require a valid postcode") \
+            #         % {'country': self.country}
+            #     raise exceptions.ValidationError(msg)
 
         if self.postcode and self.country_id:
             # Ensure postcodes are always uppercase
