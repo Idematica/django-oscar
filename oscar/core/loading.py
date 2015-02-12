@@ -126,7 +126,7 @@ def _import_module(module_label, classnames):
         # application was found and ImportError originates within the local app
         __, __, exc_traceback = sys.exc_info()
         frames = traceback.extract_tb(exc_traceback)
-        if len(frames) > 1:
+        if len(frames) > 2:
             raise
 
 
