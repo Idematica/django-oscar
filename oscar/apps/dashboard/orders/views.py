@@ -224,6 +224,14 @@ class OrderListView(BulkEditMixin, ListView):
             self.description = self.desc_template % self.get_desc_context()
             return self.base_queryset.filter(status=status)
 
+        if 'order_statuses' in self.request.GET:
+            self.form = self.form_class()
+            statuses = self.request.GET['order_statuses']
+            if statuses.lower() == 'none':
+                statuses = None
+            self.description = self.desc_template % self.get_desc_context()
+            return self.base_queryset.filter(status__in=statuses.split(","))
+
         if 'order_number' not in self.request.GET:
             self.description = self.desc_template % self.get_desc_context()
             self.form = self.form_class()
