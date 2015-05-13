@@ -391,6 +391,7 @@ class OrderDetailView(DetailView):
         ctx['active_tab'] = kwargs.get('active_tab', 'lines')
         ctx['note_form'] = self.get_order_note_form()
         ctx['line_statuses'] = Line.all_statuses()
+        ctx['order_statuses'] = Order.all_statuses()
         ctx['shipping_event_types'] = ShippingEventType.objects.all()
         ctx['payment_event_types'] = PaymentEventType.objects.all()
         ctx['payment_transactions'] = self.get_payment_transactions()
