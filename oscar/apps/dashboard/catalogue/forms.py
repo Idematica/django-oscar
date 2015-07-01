@@ -1,3 +1,4 @@
+from apps.color.models import ColorCollection
 from django import forms
 from django.core.exceptions import ValidationError, MultipleObjectsReturned
 from django.forms.models import inlineformset_factory, BaseInlineFormSet
@@ -195,6 +196,13 @@ def _attr_multi_option_field(attribute):
         queryset=attribute.option_group.options.all())
 
 
+def _attr_color_collection_field(attribute):
+    return forms.ModelMultipleChoiceField(
+        label=attribute.name,
+        required=attribute.required,
+        queryset=ColorCollection.objects.for_selection())
+
+
 def _attr_entity_field(attribute):
     return forms.ModelChoiceField(
         label=attribute.name,
@@ -242,6 +250,7 @@ class ProductForm(forms.ModelForm):
         "numeric": _attr_numeric_field,
         "file": _attr_file_field,
         "image": _attr_image_field,
+        "color_collection": _attr_color_collection_field,
     }
 
     class Meta:
@@ -293,7 +302,7 @@ class ProductForm(forms.ModelForm):
         for attribute in self.product_class.attributes.all():
             values = kwargs['instance'].attribute_values.filter(attribute=attribute)
             values = [v.value for v in values]
-            if attribute.type == 'multi_option':
+            if attribute.type in ('multi_option', 'color_collection'):
                 kwargs['initial']['attr_%s' % attribute.code] = values
             else:
                 if values:

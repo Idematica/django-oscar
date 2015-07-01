@@ -1,6 +1,7 @@
 from itertools import chain
 from datetime import datetime, date
 import logging
+from apps.color.models import ColorCollection
 from django.utils.html import strip_tags
 from django.utils.safestring import mark_safe
 import os
@@ -729,6 +730,7 @@ class AbstractProductAttribute(models.Model):
         ("entity", _("Entity")),
         ("file", _("File")),
         ("image", _("Image")),
+        ("color_collection", _("Color Collection")),
     )
     type = models.CharField(
         choices=TYPE_CHOICES, default=TYPE_CHOICES[0][0],
@@ -807,6 +809,16 @@ class AbstractProductAttribute(models.Model):
     def _validate_multi_option(self, value):
         self._validate_option(value)
 
+    def _validate_color_collection(self, value):
+        if not isinstance(value, get_model('color', 'ColorCollection')):
+            raise ValidationError(
+                _("Must be an ColorCollection model object instance"))
+        # valid_values = ColorCollection.objects.for_selection()
+        if not ColorCollection.objects.for_selection().filter(pk=value.pk):
+            raise ValidationError(
+                _("%(enum)s is not a valid choice for %(attr)s") %
+                {'enum': value, 'attr': self})
+
     def _validate_file(self, value):
         if value and not isinstance(value, File):
             raise ValidationError(_("Must be a file field"))
@@ -824,6 +836,7 @@ class AbstractProductAttribute(models.Model):
             'multi_option': self._validate_multi_option,
             'file': self._validate_file,
             'image': self._validate_file,
+            'color_collection': self._validate_color_collection,
         }
 
         return DATATYPE_VALIDATORS[self.type]
@@ -839,7 +852,7 @@ class AbstractProductAttribute(models.Model):
          Value could either be an individual value or
          a queryset of values (in case of a multiple choice option attribute)
          """
-        if self.type == 'multi_option' and isinstance(values, collections.Iterable):
+        if self.type in ('multi_option', 'color_collection') and isinstance(values, collections.Iterable):
             values = set(iter(values))
         else:
             values = [values]
@@ -915,6 +928,9 @@ class AbstractProductAttributeValue(models.Model):
     value_entity = models.ForeignKey(
         'catalogue.AttributeEntity', blank=True, null=True,
         verbose_name=_("Value Entity"))
+    value_color_collection = models.ForeignKey(
+        'color.ColorCollection', blank=True, null=True,
+        verbose_name=_("Color collection"))
     value_file = models.FileField(
         upload_to=settings.OSCAR_IMAGE_FOLDER, max_length=255,
         blank=True, null=True)
